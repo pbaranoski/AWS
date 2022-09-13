@@ -12,7 +12,7 @@ Author: Jason Dsouza  (https://gist.github.com/jasonrdsouza/f2c77dedb8d80faebcf9
 
 Modifications: 
 ==============
-2022-08-12 Paul Baranoski Modified suffix logic to instead use prefix logic which fit better with 
+2022-08-12 Paul Baranoski Modified suffix logic to instead use prefix logic which fits better with 
                           how multiple files are created using the COPYINTO functionality of snowflake.
 2022-08-12 Paul Baranoski Fixed bug in function chunk_by_size which was not adding chunks less than the 
                           max_filesize to the group list.
@@ -33,6 +33,10 @@ import threading
 import argparse
 import logging
 import sys
+import re
+
+#pip install natsort
+#from natsort import natsorted
 
 # Script expects everything to happen in one bucket
 BUCKET = "" # set by command line args
@@ -41,6 +45,15 @@ MIN_S3_SIZE = 6000000
 
 # Setup logger to display timestamp
 logging.basicConfig(format='%(asctime)s => %(message)s')
+
+# Used to sort list of files in S3
+tokenize = re.compile(r'(\d+)|(\D+)').findall
+
+
+# returns a tuple of tokens
+def natural_sortkey(lstTuple):   
+    #print(lstTuple[0])       
+    return tuple(int(num) if num.isnumeric()  else alpha for num, alpha in tokenize(lstTuple[0]))
 
 
 def run_concatenation(folder_to_concatenate, result_filepath, file_prefix, max_filesize):
@@ -51,7 +64,11 @@ def run_concatenation(folder_to_concatenate, result_filepath, file_prefix, max_f
     # Get S3 files to concatenate
     ######################################################
     parts_list = collect_parts(s3, folder_to_concatenate, file_prefix)
-    ##print(f"parts_list: {parts_list}")
+    #parts_list_sorted = sorted(parts_list, key=lambda x: x[0],  reverse=True)
+    parts_list_sorted = sorted(parts_list, key=natural_sortkey)
+    parts_list = parts_list_sorted
+    print(f"parts_list: {parts_list_sorted}")
+
     logging.warning("Found {} parts to concatenate in {}/{}".format(len(parts_list), BUCKET, folder_to_concatenate))
 
     # No files to concatenate found --> exit function
@@ -134,15 +151,20 @@ def new_s3_client():
 def collect_parts(s3, folder, file_prefix):
 
     logging.warning("In function collect_parts")
+    #logging.warning(f"folder:{folder}")
+    #logging.warning(f"file_prefix:{file_prefix}")
 
     #####################################################
     # Filter list by Files that look like "file_prefix".
     #####################################################
     #return filter(lambda x: x[0].endswith(suffix), _list_all_objects_with_size(s3, folder))
-    #return filter(lambda x: x[0].find(file_prefix) != -1, _list_all_objects_with_size(s3, folder))
+    #return filter(lambda x: x.find(file_prefix) != -1, _list_all_objects_with_size(s3, folder))
 
     s3FolderFileList = _list_all_objects_with_size(s3, folder)
-    #print(f"s3FolderList:{s3FolderList}")
+    #print(f"s3FolderList:{s3FolderFileList}")
+    s3FolderFileListFiltered = [S3FldFilename for S3FldFilename in s3FolderFileList if S3FldFilename[0].find(file_prefix) != -1 ]
+ 
+    '''
     s3FolderFileListFiltered = []
 
     for folderObj in s3FolderFileList:
@@ -151,6 +173,7 @@ def collect_parts(s3, folder, file_prefix):
         if S3FolderAndFilename.find(file_prefix) != -1:
             #print(f"folderObj:{folderObj}")
             s3FolderFileListFiltered.append(folderObj)
+    '''        
 
     #print(f"s3FolderListFiltered:{s3FolderFileListFiltered}")
 
@@ -284,15 +307,19 @@ def complete_concatenation(s3, result_filename, upload_id, parts_mapping):
 
 
 ######################################################
-# How to run program:
-#     python combineS3Files.py --bucket 'aws-hhs-cms-eadg-bia-ddom-extracts-nonrpod' --folder 'xtr/DEV/'  --prefix blbtn_clm_ext_20220812.091145 --output 'xtr/DEV/blbtn_clm_ext_20220812.091145.csv.gz' --filesize 1000000000
-######################################################
 # Files to combine have a format similar to this:
 #    blbtn_clm_ext_20220812.091145.csv.gz_0_0_0.csv.gz
 #    blbtn_clm_ext_20220812.091145.csv.gz_0_1_0.csv.gz
 #    blbtn_clm_ext_20220812.091145.csv.gz_0_2_0.csv.gz
 #######################################################
-if __name__ == "__main__":
+#######################################################
+# How to run program:
+#     python combineS3Files.py --bucket 'aws-hhs-cms-eadg-bia-ddom-extracts-nonrpod' 
+#                              --folder 'xtr/DEV/'  --prefix blbtn_clm_ext_20220812.091145 
+#                              --output 'xtr/DEV/blbtn_clm_ext_20220812.091145.csv.gz' 
+#                              --filesize 1000000000
+#######################################################
+def S3FileConcatenationDriver():
 
     try:    
         parser = argparse.ArgumentParser(description="S3 file combiner")
@@ -304,18 +331,24 @@ if __name__ == "__main__":
 
         args = parser.parse_args()
 
-        # hard-coded inputs
-        args.bucket = 'aws-hhs-cms-eadg-bia-ddom-extracts-nonrpod'
-        args.folder = 'xtr/DEV/'
+        #######################################################
+        # Example parameters.
+        #######################################################
+        #args.bucket = 'aws-hhs-cms-eadg-bia-ddom-extracts-nonrpod'
+        #args.folder = 'xtr/DEV/'
         #args.output = 'xtr/DEV/blb_clm_Combined.csv.gz'
         #args.output = 'xtr/DEV/blbtn_clm_ext_20220812.091145.csv.gz'
         #args.output = 'xtr/DEV/blbtn_clm_ext_20220815.094659.csv.gz'  
-        args.output = 'xtr/DEV/blbtn_clm_ext_20220815.095921.csv.gz'               
+        #args.output = 'xtr/DEV/blbtn_clm_ext_20220815.095921.csv.gz'  
         #args.prefix = 'blbtn_clm_ext_20220812.091145'
         #args.prefix = 'blbtn_clm_ext_20220815.094659'
-        args.prefix = 'blbtn_clm_ext_20220815.095921'
-        args.filesize = 1000000000
+        #args.prefix = 'blbtn_clm_ext_20220815.095921'
+        #args.filesize = 1000000000
 
+        ###############################################
+        # Set global variable BUCKET with bucket name
+        ###############################################
+        global BUCKET
         BUCKET = args.bucket
 
         #logging.warning("Combining files in {}/{} to {}/{}, with a max size of {} bytes".format(BUCKET, args.folder, BUCKET, args.output, args.filesize))
@@ -334,4 +367,8 @@ if __name__ == "__main__":
         print(e)
 
         sys.exit(12)        
-        
+
+
+if __name__ == "__main__":
+
+    S3FileConcatenationDriver()
